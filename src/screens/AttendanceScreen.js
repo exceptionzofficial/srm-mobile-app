@@ -20,6 +20,7 @@ import { checkIn, checkOut, validateLocation } from '../services/api';
 import {
     requestLocationPermission,
     getCurrentLocation,
+    promptEnableLocation,
 } from '../utils/location';
 
 const AttendanceScreen = ({ navigation }) => {
@@ -52,6 +53,17 @@ const AttendanceScreen = ({ navigation }) => {
             const hasLocationPermission = await requestLocationPermission();
             if (!hasLocationPermission) {
                 setLocationStatus('denied');
+                return;
+            }
+
+            // Prompt user to enable GPS if it's off
+            const locationEnabled = await promptEnableLocation();
+            if (!locationEnabled) {
+                setLocationStatus('denied');
+                Alert.alert(
+                    'GPS Required',
+                    'Please turn on your device location/GPS to continue.',
+                );
                 return;
             }
 

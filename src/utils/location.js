@@ -10,6 +10,42 @@ import {
     check,
     RESULTS,
 } from 'react-native-permissions';
+import {
+    isLocationEnabled,
+    promptForEnableLocationIfNeeded,
+} from 'react-native-android-location-enabler';
+
+/**
+ * Prompt user to enable device location/GPS if it's off (Android only)
+ * Shows a system dialog that allows user to turn on GPS without leaving the app
+ * @returns {Promise<boolean>} Whether location was enabled
+ */
+export const promptEnableLocation = async () => {
+    if (Platform.OS !== 'android') {
+        return true; // iOS handles this differently
+    }
+
+    try {
+        // Check if location is already enabled
+        const locationEnabled = await isLocationEnabled();
+        if (locationEnabled) {
+            return true;
+        }
+
+        // Prompt user to enable location
+        const result = await promptForEnableLocationIfNeeded({
+            interval: 10000,
+            fastInterval: 5000,
+        });
+
+        // result will be "already-enabled" or "enabled"
+        return result === 'enabled' || result === 'already-enabled';
+    } catch (error) {
+        // User denied the request or error occurred
+        console.warn('Location enabler error:', error);
+        return false;
+    }
+};
 
 /**
  * Request location permission
@@ -63,11 +99,13 @@ export const checkLocationPermission = async () => {
 };
 
 /**
- * Get current location
- * @returns {Promise<{latitude: number, longitude: number}>}
+ * Get current location with fallback
+ * First tries high accuracy (GPS), then falls back to network location
+ * @returns {Promise<{latitude: number, longitude: number, accuracy: number}>}
  */
 export const getCurrentLocation = () => {
     return new Promise((resolve, reject) => {
+        // First try with high accuracy (GPS)
         Geolocation.getCurrentPosition(
             (position) => {
                 resolve({
@@ -77,8 +115,27 @@ export const getCurrentLocation = () => {
                 });
             },
             (error) => {
-                console.error('Error getting location:', error);
-                reject(error);
+                console.warn('High accuracy location failed, trying network location:', error);
+
+                // Fallback: Try with low accuracy (network-based)
+                Geolocation.getCurrentPosition(
+                    (position) => {
+                        resolve({
+                            latitude: position.coords.latitude,
+                            longitude: position.coords.longitude,
+                            accuracy: position.coords.accuracy,
+                        });
+                    },
+                    (fallbackError) => {
+                        console.error('All location methods failed:', fallbackError);
+                        reject(fallbackError);
+                    },
+                    {
+                        enableHighAccuracy: false, // Use network/cell tower
+                        timeout: 20000,
+                        maximumAge: 30000,
+                    },
+                );
             },
             {
                 enableHighAccuracy: true,
@@ -113,6 +170,7 @@ export const calculateDistance = (lat1, lng1, lat2, lng2) => {
 };
 
 export default {
+    promptEnableLocation,
     requestLocationPermission,
     checkLocationPermission,
     getCurrentLocation,

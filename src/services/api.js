@@ -5,8 +5,8 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// API Base URL - Update this with your backend URL
-const API_BASE_URL = 'https://12ecb36ec432.ngrok-free.app'; // Use 10.0.2.2 for Android Emulator, localhost for iOS
+// API Base URL - Production Vercel deployment
+const API_BASE_URL = 'https://srm-backend-lake.vercel.app';
 
 const api = axios.create({
     baseURL: API_BASE_URL,

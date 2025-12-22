@@ -22,6 +22,7 @@ import { registerFace, validateLocation } from '../services/api';
 import {
     requestLocationPermission,
     getCurrentLocation,
+    promptEnableLocation,
 } from '../utils/location';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -65,6 +66,17 @@ const FaceRegistrationScreen = ({ route, navigation }) => {
                 Alert.alert(
                     'Location Required',
                     'Please enable location access to register your face.',
+                );
+                return;
+            }
+
+            // Prompt user to enable GPS if it's off (shows system dialog)
+            const locationEnabled = await promptEnableLocation();
+            if (!locationEnabled) {
+                setLocationStatus('denied');
+                Alert.alert(
+                    'GPS Required',
+                    'Please turn on your device location/GPS to continue.',
                 );
                 return;
             }
