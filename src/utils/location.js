@@ -1,51 +1,17 @@
 /**
  * Location utility functions
+ * Uses React Native's built-in PermissionsAndroid for better compatibility
  */
 
+import { Platform, PermissionsAndroid, Alert, Linking } from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
-import { Platform, PermissionsAndroid } from 'react-native';
-import {
-    PERMISSIONS,
-    request,
-    check,
-    RESULTS,
-} from 'react-native-permissions';
-import {
-    isLocationEnabled,
-    promptForEnableLocationIfNeeded,
-} from 'react-native-android-location-enabler';
 
-/**
- * Prompt user to enable device location/GPS if it's off (Android only)
- * Shows a system dialog that allows user to turn on GPS without leaving the app
- * @returns {Promise<boolean>} Whether location was enabled
- */
-export const promptEnableLocation = async () => {
-    if (Platform.OS !== 'android') {
-        return true; // iOS handles this differently
-    }
-
-    try {
-        // Check if location is already enabled
-        const locationEnabled = await isLocationEnabled();
-        if (locationEnabled) {
-            return true;
-        }
-
-        // Prompt user to enable location
-        const result = await promptForEnableLocationIfNeeded({
-            interval: 10000,
-            fastInterval: 5000,
-        });
-
-        // result will be "already-enabled" or "enabled"
-        return result === 'enabled' || result === 'already-enabled';
-    } catch (error) {
-        // User denied the request or error occurred
-        console.warn('Location enabler error:', error);
-        return false;
-    }
-};
+// Configure geolocation
+Geolocation.setRNConfiguration({
+    skipPermissionRequests: false,
+    authorizationLevel: 'whenInUse',
+    locationProvider: 'auto',
+});
 
 /**
  * Request location permission
@@ -54,22 +20,52 @@ export const promptEnableLocation = async () => {
 export const requestLocationPermission = async () => {
     try {
         if (Platform.OS === 'android') {
+            // Check if already granted
+            const alreadyGranted = await PermissionsAndroid.check(
+                PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+            );
+
+            if (alreadyGranted) {
+                console.log('Location permission already granted');
+                return true;
+            }
+
+            // Request permission
             const granted = await PermissionsAndroid.request(
                 PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
                 {
-                    title: 'Location Permission',
-                    message:
-                        'SRM Sweets needs access to your location for attendance verification.',
+                    title: 'Location Permission Required',
+                    message: 'SRM Sweets needs access to your location for attendance verification.',
                     buttonNeutral: 'Ask Me Later',
                     buttonNegative: 'Cancel',
                     buttonPositive: 'OK',
                 },
             );
-            return granted === PermissionsAndroid.RESULTS.GRANTED;
+
+            console.log('Location permission result:', granted);
+
+            if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+                return true;
+            } else if (granted === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) {
+                Alert.alert(
+                    'Permission Required',
+                    'Location permission is permanently denied. Please enable it in Settings.',
+                    [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Open Settings', onPress: () => Linking.openSettings() },
+                    ]
+                );
+                return false;
+            } else {
+                Alert.alert(
+                    'Permission Denied',
+                    'Location permission is required for face registration and attendance.',
+                );
+                return false;
+            }
         } else {
             // iOS
-            const result = await request(PERMISSIONS.IOS.LOCATION_WHEN_IN_USE);
-            return result === RESULTS.GRANTED;
+            return true;
         }
     } catch (error) {
         console.error('Error requesting location permission:', error);
@@ -88,10 +84,8 @@ export const checkLocationPermission = async () => {
                 PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
             );
             return granted;
-        } else {
-            const result = await check(PERMISSIONS.IOS.LOCATION_WHEN_IN_USE);
-            return result === RESULTS.GRANTED;
         }
+        return true;
     } catch (error) {
         console.error('Error checking location permission:', error);
         return false;
@@ -99,15 +93,31 @@ export const checkLocationPermission = async () => {
 };
 
 /**
- * Get current location with fallback
- * First tries high accuracy (GPS), then falls back to network location
+ * Get current location with multiple fallback attempts
  * @returns {Promise<{latitude: number, longitude: number, accuracy: number}>}
  */
 export const getCurrentLocation = () => {
     return new Promise((resolve, reject) => {
-        // First try with high accuracy (GPS)
+        console.log('Attempting to get current location...');
+
+        // Configuration for high accuracy
+        const highAccuracyOptions = {
+            enableHighAccuracy: true,
+            timeout: 30000, // 30 seconds
+            maximumAge: 5000,
+        };
+
+        // Configuration for low accuracy (fallback)
+        const lowAccuracyOptions = {
+            enableHighAccuracy: false,
+            timeout: 30000,
+            maximumAge: 60000, // Allow older cached location
+        };
+
+        // Try high accuracy first
         Geolocation.getCurrentPosition(
             (position) => {
+                console.log('Location obtained (high accuracy):', position.coords);
                 resolve({
                     latitude: position.coords.latitude,
                     longitude: position.coords.longitude,
@@ -115,11 +125,12 @@ export const getCurrentLocation = () => {
                 });
             },
             (error) => {
-                console.warn('High accuracy location failed, trying network location:', error);
+                console.warn('High accuracy failed:', error.message, '- trying low accuracy...');
 
-                // Fallback: Try with low accuracy (network-based)
+                // Fallback to low accuracy
                 Geolocation.getCurrentPosition(
                     (position) => {
+                        console.log('Location obtained (low accuracy):', position.coords);
                         resolve({
                             latitude: position.coords.latitude,
                             longitude: position.coords.longitude,
@@ -128,20 +139,50 @@ export const getCurrentLocation = () => {
                     },
                     (fallbackError) => {
                         console.error('All location methods failed:', fallbackError);
+
+                        // Show user-friendly alert with specific error
+                        let errorMessage = 'Unable to get your location. ';
+                        let errorCode = fallbackError.code || 'unknown';
+
+                        switch (fallbackError.code) {
+                            case 1: // PERMISSION_DENIED
+                                errorMessage += 'Location permission was denied.';
+                                break;
+                            case 2: // POSITION_UNAVAILABLE
+                                errorMessage += 'Please turn ON your GPS/Location in device settings.';
+                                break;
+                            case 3: // TIMEOUT
+                                errorMessage += 'Location request timed out. Please try again.';
+                                break;
+                            default:
+                                errorMessage += 'Please ensure GPS is enabled and try again.';
+                        }
+
+                        Alert.alert(
+                            'Location Error',
+                            errorMessage,
+                            [
+                                { text: 'Cancel', style: 'cancel' },
+                                {
+                                    text: 'Open Settings',
+                                    onPress: () => {
+                                        // Open location settings directly on Android
+                                        if (Platform.OS === 'android') {
+                                            Linking.sendIntent('android.settings.LOCATION_SOURCE_SETTINGS');
+                                        } else {
+                                            Linking.openSettings();
+                                        }
+                                    }
+                                },
+                            ]
+                        );
+
                         reject(fallbackError);
                     },
-                    {
-                        enableHighAccuracy: false, // Use network/cell tower
-                        timeout: 20000,
-                        maximumAge: 30000,
-                    },
+                    lowAccuracyOptions,
                 );
             },
-            {
-                enableHighAccuracy: true,
-                timeout: 15000,
-                maximumAge: 10000,
-            },
+            highAccuracyOptions,
         );
     });
 };
@@ -170,7 +211,6 @@ export const calculateDistance = (lat1, lng1, lat2, lng2) => {
 };
 
 export default {
-    promptEnableLocation,
     requestLocationPermission,
     checkLocationPermission,
     getCurrentLocation,

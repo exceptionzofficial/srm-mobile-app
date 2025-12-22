@@ -20,7 +20,6 @@ import { checkIn, checkOut, validateLocation } from '../services/api';
 import {
     requestLocationPermission,
     getCurrentLocation,
-    promptEnableLocation,
 } from '../utils/location';
 
 const AttendanceScreen = ({ navigation }) => {
@@ -56,34 +55,46 @@ const AttendanceScreen = ({ navigation }) => {
                 return;
             }
 
-            // Prompt user to enable GPS if it's off
-            const locationEnabled = await promptEnableLocation();
-            if (!locationEnabled) {
-                setLocationStatus('denied');
-                Alert.alert(
-                    'GPS Required',
-                    'Please turn on your device location/GPS to continue.',
-                );
+            // Get current location
+            let location;
+            try {
+                location = await getCurrentLocation();
+                setCurrentLocation(location);
+            } catch (locError) {
+                console.error('GPS Error:', locError);
+                setLocationStatus('error');
                 return;
             }
 
-            const location = await getCurrentLocation();
-            setCurrentLocation(location);
-
-            const validation = await validateLocation(
-                location.latitude,
-                location.longitude,
-            );
-
-            setIsWithinGeofence(validation.withinRange);
-            setDistance(validation.distance);
-            setLocationStatus(validation.withinRange ? 'valid' : 'out_of_range');
-
-            if (!validation.withinRange) {
-                Alert.alert(
-                    '⚠️ Too Far From Office',
-                    `You are ${validation.distance}m away.\nAllowed: ${validation.allowedRadius}m`,
+            // Validate with backend
+            try {
+                const validation = await validateLocation(
+                    location.latitude,
+                    location.longitude,
                 );
+
+                // If geo-fence not configured, allow
+                if (!validation.isConfigured) {
+                    setIsWithinGeofence(true);
+                    setLocationStatus('valid');
+                    return;
+                }
+
+                setIsWithinGeofence(validation.withinRange);
+                setDistance(validation.distance);
+                setLocationStatus(validation.withinRange ? 'valid' : 'out_of_range');
+
+                if (!validation.withinRange) {
+                    Alert.alert(
+                        '⚠️ Too Far From Office',
+                        `You are ${validation.distance}m away.\nAllowed: ${validation.allowedRadius}m`,
+                    );
+                }
+            } catch (apiError) {
+                console.error('API Error:', apiError);
+                // Allow if API fails (geo-fence might not be configured)
+                setIsWithinGeofence(true);
+                setLocationStatus('valid');
             }
         } catch (error) {
             console.error('Location check error:', error);

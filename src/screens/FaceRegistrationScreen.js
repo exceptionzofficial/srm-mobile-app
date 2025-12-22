@@ -22,7 +22,6 @@ import { registerFace, validateLocation } from '../services/api';
 import {
     requestLocationPermission,
     getCurrentLocation,
-    promptEnableLocation,
 } from '../utils/location';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
