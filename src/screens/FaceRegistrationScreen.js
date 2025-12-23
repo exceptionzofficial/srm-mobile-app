@@ -22,6 +22,7 @@ import { registerFace, validateLocation } from '../services/api';
 import {
     requestLocationPermission,
     getCurrentLocation,
+    validateLocationFast,
 } from '../utils/location';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -40,47 +41,28 @@ const FaceRegistrationScreen = ({ route, navigation }) => {
     const device = useCameraDevice('front');
     const { hasPermission, requestPermission } = useCameraPermission();
 
-    // Check permissions and location on mount
     useEffect(() => {
         initializeScreen();
     }, []);
 
     const initializeScreen = async () => {
-        // Request camera permission
         if (!hasPermission) {
             await requestPermission();
         }
-
-        // Request location and validate geo-fence
         await checkLocationAndGeofence();
     };
 
     const checkLocationAndGeofence = async () => {
         setLocationStatus('checking');
         try {
-            // Request location permission
             const hasLocationPermission = await requestLocationPermission();
             if (!hasLocationPermission) {
                 setLocationStatus('denied');
-                Alert.alert(
-                    'Location Required',
-                    'Please enable location access to register your face.',
-                );
+                Alert.alert('Location Required', 'Please enable location access.');
                 return;
             }
 
-            // Prompt user to enable GPS if it's off (shows system dialog)
-            const locationEnabled = await promptEnableLocation();
-            if (!locationEnabled) {
-                setLocationStatus('denied');
-                Alert.alert(
-                    'GPS Required',
-                    'Please turn on your device location/GPS to continue.',
-                );
-                return;
-            }
-
-            // Get current location
+            // Get current location (uses cache for speed)
             let location;
             try {
                 location = await getCurrentLocation();
@@ -88,57 +70,39 @@ const FaceRegistrationScreen = ({ route, navigation }) => {
             } catch (locError) {
                 console.error('GPS Error:', locError);
                 setLocationStatus('error');
-                Alert.alert(
-                    'GPS Error',
-                    'Unable to get your current location. Please ensure GPS is enabled and try again.',
-                );
                 return;
             }
 
-            // Validate with backend
-            try {
-                const validation = await validateLocation(
-                    location.latitude,
-                    location.longitude,
-                );
+            // Fast validation using cached geo-fence settings
+            const validation = await validateLocationFast(
+                location.latitude,
+                location.longitude,
+                validateLocation
+            );
 
-                // If geo-fence is not configured, allow registration
-                if (!validation.isConfigured || validation.isConfigured === false) {
-                    setIsWithinGeofence(true);
-                    setLocationStatus('valid');
-                    Alert.alert(
-                        'Note',
-                        'Geo-fence is not configured yet. You can proceed with registration.',
-                    );
-                    return;
-                }
-
-                setIsWithinGeofence(validation.withinRange);
-                setDistance(validation.distance);
-
-                if (validation.withinRange) {
-                    setLocationStatus('valid');
-                } else {
-                    setLocationStatus('out_of_range');
-                    Alert.alert(
-                        '⚠️ Too Far From Office',
-                        `You are ${validation.distance}m away from the office.\n\nAllowed radius: ${validation.allowedRadius}m\n\nPlease move closer to the office to register your face.`,
-                    );
-                }
-            } catch (apiError) {
-                console.error('API validation error:', apiError);
-                // If API fails, still allow with warning (geo-fence might not be set up)
+            if (!validation.isConfigured) {
                 setIsWithinGeofence(true);
                 setLocationStatus('valid');
-                console.log('Geo-fence validation skipped - API error or not configured');
+                return;
+            }
+
+            setIsWithinGeofence(validation.withinRange);
+            setDistance(validation.distance);
+
+            if (validation.withinRange) {
+                setLocationStatus('valid');
+            } else {
+                setLocationStatus('out_of_range');
+                Alert.alert(
+                    '⚠️ Too Far From Office',
+                    `You are ${validation.distance}m away.\nAllowed: ${validation.allowedRadius}m`,
+                );
             }
         } catch (error) {
             console.error('Location check error:', error);
-            setLocationStatus('error');
-            Alert.alert(
-                'Location Error',
-                'Unable to verify your location. Please check:\n1. GPS is enabled\n2. Location permission is granted\n3. You are not in airplane mode',
-            );
+            // Allow if validation fails
+            setIsWithinGeofence(true);
+            setLocationStatus('valid');
         }
     };
 

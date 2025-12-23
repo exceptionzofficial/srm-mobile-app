@@ -20,6 +20,7 @@ import { checkIn, checkOut, validateLocation } from '../services/api';
 import {
     requestLocationPermission,
     getCurrentLocation,
+    validateLocationFast,
 } from '../utils/location';
 
 const AttendanceScreen = ({ navigation }) => {
@@ -30,7 +31,7 @@ const AttendanceScreen = ({ navigation }) => {
     const [currentLocation, setCurrentLocation] = useState(null);
     const [isWithinGeofence, setIsWithinGeofence] = useState(false);
     const [distance, setDistance] = useState(null);
-    const [mode, setMode] = useState('check-in'); // 'check-in' or 'check-out'
+    const [mode, setMode] = useState('check-in');
 
     const device = useCameraDevice('front');
     const { hasPermission, requestPermission } = useCameraPermission();
@@ -55,7 +56,7 @@ const AttendanceScreen = ({ navigation }) => {
                 return;
             }
 
-            // Get current location
+            // Get current location (uses cache for speed)
             let location;
             try {
                 location = await getCurrentLocation();
@@ -66,39 +67,35 @@ const AttendanceScreen = ({ navigation }) => {
                 return;
             }
 
-            // Validate with backend
-            try {
-                const validation = await validateLocation(
-                    location.latitude,
-                    location.longitude,
-                );
+            // Fast validation using cached geo-fence settings
+            const validation = await validateLocationFast(
+                location.latitude,
+                location.longitude,
+                validateLocation // API fallback function
+            );
 
-                // If geo-fence not configured, allow
-                if (!validation.isConfigured) {
-                    setIsWithinGeofence(true);
-                    setLocationStatus('valid');
-                    return;
-                }
-
-                setIsWithinGeofence(validation.withinRange);
-                setDistance(validation.distance);
-                setLocationStatus(validation.withinRange ? 'valid' : 'out_of_range');
-
-                if (!validation.withinRange) {
-                    Alert.alert(
-                        '⚠️ Too Far From Office',
-                        `You are ${validation.distance}m away.\nAllowed: ${validation.allowedRadius}m`,
-                    );
-                }
-            } catch (apiError) {
-                console.error('API Error:', apiError);
-                // Allow if API fails (geo-fence might not be configured)
+            // If geo-fence not configured, allow
+            if (!validation.isConfigured) {
                 setIsWithinGeofence(true);
                 setLocationStatus('valid');
+                return;
+            }
+
+            setIsWithinGeofence(validation.withinRange);
+            setDistance(validation.distance);
+            setLocationStatus(validation.withinRange ? 'valid' : 'out_of_range');
+
+            if (!validation.withinRange) {
+                Alert.alert(
+                    '⚠️ Too Far From Office',
+                    `You are ${validation.distance}m away.\nAllowed: ${validation.allowedRadius}m`,
+                );
             }
         } catch (error) {
             console.error('Location check error:', error);
-            setLocationStatus('error');
+            // Allow if validation fails
+            setIsWithinGeofence(true);
+            setLocationStatus('valid');
         }
     };
 

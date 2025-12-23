@@ -1,12 +1,21 @@
 /**
- * Location utility functions
- * Uses React Native's built-in PermissionsAndroid for better compatibility
+ * Location utility functions with geo-fence caching
+ * Caches geo-fence settings locally for faster validation
  */
 
 import { Platform, PermissionsAndroid, Alert, Linking } from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Configure geolocation
+// Storage keys
+const GEOFENCE_CACHE_KEY = '@srm_geofence_settings';
+const GEOFENCE_CACHE_EXPIRY = '@srm_geofence_expiry';
+const LAST_LOCATION_KEY = '@srm_last_location';
+
+// Cache duration: 1 hour (in milliseconds)
+const CACHE_DURATION = 60 * 60 * 1000;
+
+// Configure geolocation for faster response
 Geolocation.setRNConfiguration({
     skipPermissionRequests: false,
     authorizationLevel: 'whenInUse',
@@ -15,185 +24,137 @@ Geolocation.setRNConfiguration({
 
 /**
  * Request location permission
- * @returns {Promise<boolean>} Whether permission was granted
  */
 export const requestLocationPermission = async () => {
     try {
         if (Platform.OS === 'android') {
-            // Check if already granted
             const alreadyGranted = await PermissionsAndroid.check(
                 PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
             );
 
             if (alreadyGranted) {
-                console.log('Location permission already granted');
                 return true;
             }
 
-            // Request permission
             const granted = await PermissionsAndroid.request(
                 PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
                 {
                     title: 'Location Permission Required',
-                    message: 'SRM Sweets needs access to your location for attendance verification.',
-                    buttonNeutral: 'Ask Me Later',
-                    buttonNegative: 'Cancel',
+                    message: 'SRM Sweets needs your location for attendance.',
                     buttonPositive: 'OK',
                 },
             );
 
-            console.log('Location permission result:', granted);
-
-            if (granted === PermissionsAndroid.RESULTS.GRANTED) {
-                return true;
-            } else if (granted === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) {
-                Alert.alert(
-                    'Permission Required',
-                    'Location permission is permanently denied. Please enable it in Settings.',
-                    [
-                        { text: 'Cancel', style: 'cancel' },
-                        { text: 'Open Settings', onPress: () => Linking.openSettings() },
-                    ]
-                );
-                return false;
-            } else {
-                Alert.alert(
-                    'Permission Denied',
-                    'Location permission is required for face registration and attendance.',
-                );
-                return false;
-            }
-        } else {
-            // iOS
-            return true;
-        }
-    } catch (error) {
-        console.error('Error requesting location permission:', error);
-        return false;
-    }
-};
-
-/**
- * Check if location permission is granted
- * @returns {Promise<boolean>}
- */
-export const checkLocationPermission = async () => {
-    try {
-        if (Platform.OS === 'android') {
-            const granted = await PermissionsAndroid.check(
-                PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-            );
-            return granted;
+            return granted === PermissionsAndroid.RESULTS.GRANTED;
         }
         return true;
     } catch (error) {
-        console.error('Error checking location permission:', error);
+        console.error('Permission error:', error);
         return false;
     }
 };
 
 /**
- * Get current location with multiple fallback attempts
- * @returns {Promise<{latitude: number, longitude: number, accuracy: number}>}
+ * Get current location - optimized for speed
+ * Uses shorter timeout and caches last known location
  */
 export const getCurrentLocation = () => {
-    return new Promise((resolve, reject) => {
-        console.log('Attempting to get current location...');
+    return new Promise(async (resolve, reject) => {
+        // First, try to get cached location for instant display
+        try {
+            const cachedLocation = await AsyncStorage.getItem(LAST_LOCATION_KEY);
+            if (cachedLocation) {
+                const cached = JSON.parse(cachedLocation);
+                const age = Date.now() - cached.timestamp;
+                // Use cached if less than 2 minutes old
+                if (age < 2 * 60 * 1000) {
+                    console.log('Using cached location (< 2 min old)');
+                    resolve(cached);
+                    return;
+                }
+            }
+        } catch (e) {
+            // Ignore cache errors
+        }
 
-        // Configuration for high accuracy
-        const highAccuracyOptions = {
-            enableHighAccuracy: true,
-            timeout: 30000, // 30 seconds
-            maximumAge: 5000,
-        };
-
-        // Configuration for low accuracy (fallback)
-        const lowAccuracyOptions = {
-            enableHighAccuracy: false,
-            timeout: 30000,
-            maximumAge: 60000, // Allow older cached location
-        };
-
-        // Try high accuracy first
+        // Get fresh location with shorter timeout
         Geolocation.getCurrentPosition(
-            (position) => {
-                console.log('Location obtained (high accuracy):', position.coords);
-                resolve({
+            async (position) => {
+                const location = {
                     latitude: position.coords.latitude,
                     longitude: position.coords.longitude,
                     accuracy: position.coords.accuracy,
-                });
+                    timestamp: Date.now(),
+                };
+
+                // Cache the location
+                try {
+                    await AsyncStorage.setItem(LAST_LOCATION_KEY, JSON.stringify(location));
+                } catch (e) {
+                    // Ignore cache errors
+                }
+
+                resolve(location);
             },
             (error) => {
-                console.warn('High accuracy failed:', error.message, '- trying low accuracy...');
+                console.warn('Location error:', error.message);
 
-                // Fallback to low accuracy
-                Geolocation.getCurrentPosition(
-                    (position) => {
-                        console.log('Location obtained (low accuracy):', position.coords);
-                        resolve({
-                            latitude: position.coords.latitude,
-                            longitude: position.coords.longitude,
-                            accuracy: position.coords.accuracy,
-                        });
-                    },
-                    (fallbackError) => {
-                        console.error('All location methods failed:', fallbackError);
-
-                        // Show user-friendly alert with specific error
-                        let errorMessage = 'Unable to get your location. ';
-                        let errorCode = fallbackError.code || 'unknown';
-
-                        switch (fallbackError.code) {
-                            case 1: // PERMISSION_DENIED
-                                errorMessage += 'Location permission was denied.';
-                                break;
-                            case 2: // POSITION_UNAVAILABLE
-                                errorMessage += 'Please turn ON your GPS/Location in device settings.';
-                                break;
-                            case 3: // TIMEOUT
-                                errorMessage += 'Location request timed out. Please try again.';
-                                break;
-                            default:
-                                errorMessage += 'Please ensure GPS is enabled and try again.';
+                // Try to use older cached location as fallback
+                AsyncStorage.getItem(LAST_LOCATION_KEY)
+                    .then(cached => {
+                        if (cached) {
+                            console.log('Using older cached location as fallback');
+                            resolve(JSON.parse(cached));
+                        } else {
+                            reject(error);
                         }
-
-                        Alert.alert(
-                            'Location Error',
-                            errorMessage,
-                            [
-                                { text: 'Cancel', style: 'cancel' },
-                                {
-                                    text: 'Open Settings',
-                                    onPress: () => {
-                                        // Open location settings directly on Android
-                                        if (Platform.OS === 'android') {
-                                            Linking.sendIntent('android.settings.LOCATION_SOURCE_SETTINGS');
-                                        } else {
-                                            Linking.openSettings();
-                                        }
-                                    }
-                                },
-                            ]
-                        );
-
-                        reject(fallbackError);
-                    },
-                    lowAccuracyOptions,
-                );
+                    })
+                    .catch(() => reject(error));
             },
-            highAccuracyOptions,
+            {
+                enableHighAccuracy: false, // Faster with network location
+                timeout: 10000, // 10 seconds max
+                maximumAge: 60000, // Accept 1 minute old location
+            },
         );
     });
 };
 
 /**
+ * Cache geo-fence settings locally
+ */
+export const cacheGeofenceSettings = async (settings) => {
+    try {
+        await AsyncStorage.setItem(GEOFENCE_CACHE_KEY, JSON.stringify(settings));
+        await AsyncStorage.setItem(GEOFENCE_CACHE_EXPIRY, String(Date.now() + CACHE_DURATION));
+        console.log('Geo-fence settings cached');
+    } catch (error) {
+        console.error('Error caching geo-fence:', error);
+    }
+};
+
+/**
+ * Get cached geo-fence settings (if valid)
+ */
+export const getCachedGeofenceSettings = async () => {
+    try {
+        const expiry = await AsyncStorage.getItem(GEOFENCE_CACHE_EXPIRY);
+        if (!expiry || Date.now() > parseInt(expiry, 10)) {
+            return null; // Cache expired
+        }
+
+        const cached = await AsyncStorage.getItem(GEOFENCE_CACHE_KEY);
+        if (cached) {
+            return JSON.parse(cached);
+        }
+    } catch (error) {
+        console.error('Error reading cached geo-fence:', error);
+    }
+    return null;
+};
+
+/**
  * Calculate distance between two coordinates (Haversine formula)
- * @param {number} lat1 
- * @param {number} lng1 
- * @param {number} lat2 
- * @param {number} lng2 
- * @returns {number} Distance in meters
  */
 export const calculateDistance = (lat1, lng1, lat2, lng2) => {
     const R = 6371e3; // Earth's radius in meters
@@ -207,12 +168,85 @@ export const calculateDistance = (lat1, lng1, lat2, lng2) => {
         Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
-    return R * c;
+    return Math.round(R * c);
+};
+
+/**
+ * Fast geo-fence validation using cached settings
+ * Falls back to API if cache is empty/expired
+ */
+export const validateLocationFast = async (latitude, longitude, apiValidateFn) => {
+    // Try cached settings first (instant)
+    const cachedSettings = await getCachedGeofenceSettings();
+
+    if (cachedSettings && cachedSettings.officeLat && cachedSettings.officeLng) {
+        const distance = calculateDistance(
+            latitude,
+            longitude,
+            cachedSettings.officeLat,
+            cachedSettings.officeLng
+        );
+
+        const withinRange = distance <= cachedSettings.radiusMeters;
+
+        console.log(`Fast validation: ${distance}m from office (max: ${cachedSettings.radiusMeters}m)`);
+
+        return {
+            withinRange,
+            distance,
+            allowedRadius: cachedSettings.radiusMeters,
+            isConfigured: true,
+            fromCache: true,
+        };
+    }
+
+    // No cache - call API and cache the result
+    try {
+        const result = await apiValidateFn(latitude, longitude);
+
+        // Cache the settings for next time
+        if (result.officeLocation) {
+            await cacheGeofenceSettings({
+                officeLat: result.officeLocation.lat,
+                officeLng: result.officeLocation.lng,
+                radiusMeters: result.allowedRadius,
+            });
+        }
+
+        return result;
+    } catch (error) {
+        // If API fails and no cache, allow access
+        console.log('API failed, no cache - allowing access');
+        return {
+            withinRange: true,
+            distance: 0,
+            allowedRadius: 0,
+            isConfigured: false,
+        };
+    }
+};
+
+/**
+ * Clear all cached data (for logout or refresh)
+ */
+export const clearLocationCache = async () => {
+    try {
+        await AsyncStorage.multiRemove([
+            GEOFENCE_CACHE_KEY,
+            GEOFENCE_CACHE_EXPIRY,
+            LAST_LOCATION_KEY,
+        ]);
+    } catch (error) {
+        console.error('Error clearing cache:', error);
+    }
 };
 
 export default {
     requestLocationPermission,
-    checkLocationPermission,
     getCurrentLocation,
     calculateDistance,
+    cacheGeofenceSettings,
+    getCachedGeofenceSettings,
+    validateLocationFast,
+    clearLocationCache,
 };
