@@ -11,29 +11,60 @@ import {
     ScrollView,
     RefreshControl,
     Dimensions,
+    Alert,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getAttendanceHistory, getEmployee } from '../services/api';
+import { getSavedEmployee, clearSession, calculateTodayDuration } from '../utils/session';
 
 const { width } = Dimensions.get('window');
 
 const DashboardScreen = ({ route, navigation }) => {
     const [employee, setEmployee] = useState(route.params?.employee || null);
     const [todayAttendance, setTodayAttendance] = useState(null);
+    const [todayDuration, setTodayDuration] = useState({ formattedDuration: '0h 0m', sessions: [] });
     const [recentAttendance, setRecentAttendance] = useState([]);
     const [refreshing, setRefreshing] = useState(false);
     const [currentTime, setCurrentTime] = useState(new Date());
+    const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        loadData();
+        let isMounted = true;
+
+        const initialize = async () => {
+            // Try to load saved employee if not passed from navigation
+            if (!employee) {
+                const savedEmployee = await getSavedEmployee();
+                if (savedEmployee && isMounted) {
+                    setEmployee(savedEmployee);
+                } else if (isMounted) {
+                    // No saved session, go to attendance
+                    navigation.reset({
+                        index: 0,
+                        routes: [{ name: 'Attendance' }],
+                    });
+                    return;
+                }
+            }
+            if (isMounted) {
+                await loadData();
+                setIsLoading(false);
+            }
+        };
+
+        initialize();
 
         // Update time every second
         const timer = setInterval(() => {
-            setCurrentTime(new Date());
+            if (isMounted) {
+                setCurrentTime(new Date());
+            }
         }, 1000);
 
-        return () => clearInterval(timer);
-    }, []);
+        return () => {
+            isMounted = false;
+            clearInterval(timer);
+        };
+    }, [employee?.employeeId]);
 
     const loadData = async () => {
         if (!employee?.employeeId) return;
@@ -43,10 +74,16 @@ const DashboardScreen = ({ route, navigation }) => {
             if (historyResponse.success) {
                 setRecentAttendance(historyResponse.history);
 
-                // Check if already checked in today
+                // Get today's records (could be multiple check-ins/outs)
                 const today = new Date().toISOString().split('T')[0];
-                const todayRecord = historyResponse.history.find(a => a.date === today);
-                setTodayAttendance(todayRecord);
+                const todayRecords = historyResponse.history.filter(a => a.date === today);
+
+                // Calculate total duration
+                const duration = calculateTodayDuration(todayRecords);
+                setTodayDuration(duration);
+
+                // Set the latest today record for display
+                setTodayAttendance(todayRecords[0] || null);
             }
         } catch (error) {
             console.error('Error loading data:', error);
@@ -91,12 +128,33 @@ const DashboardScreen = ({ route, navigation }) => {
     };
 
     const handleLogout = async () => {
-        await AsyncStorage.clear();
-        navigation.reset({
-            index: 0,
-            routes: [{ name: 'EmployeeId' }],
-        });
+        Alert.alert(
+            'Logout',
+            'Are you sure you want to logout?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Logout',
+                    style: 'destructive',
+                    onPress: async () => {
+                        await clearSession();
+                        navigation.reset({
+                            index: 0,
+                            routes: [{ name: 'Attendance' }],
+                        });
+                    },
+                },
+            ]
+        );
     };
+
+    if (isLoading) {
+        return (
+            <View style={styles.loadingContainer}>
+                <Text style={styles.loadingText}>Loading...</Text>
+            </View>
+        );
+    }
 
     return (
         <ScrollView
@@ -141,24 +199,41 @@ const DashboardScreen = ({ route, navigation }) => {
             <View style={styles.statusCard}>
                 <Text style={styles.sectionTitle}>Today's Attendance</Text>
                 {todayAttendance ? (
-                    <View style={styles.statusRow}>
-                        <View style={styles.statusItem}>
-                            <Text style={styles.statusLabel}>Check In</Text>
-                            <Text style={styles.statusValue}>{formatTime(todayAttendance.checkInTime)}</Text>
-                        </View>
-                        <View style={styles.statusDivider} />
-                        <View style={styles.statusItem}>
-                            <Text style={styles.statusLabel}>Check Out</Text>
-                            <Text style={styles.statusValue}>{formatTime(todayAttendance.checkOutTime)}</Text>
-                        </View>
-                        <View style={styles.statusDivider} />
-                        <View style={styles.statusItem}>
-                            <Text style={styles.statusLabel}>Status</Text>
-                            <View style={[styles.statusBadge, { backgroundColor: getStatusColor(todayAttendance.status) }]}>
-                                <Text style={styles.statusBadgeText}>{todayAttendance.status?.toUpperCase()}</Text>
+                    <>
+                        <View style={styles.statusRow}>
+                            <View style={styles.statusItem}>
+                                <Text style={styles.statusLabel}>Check In</Text>
+                                <Text style={styles.statusValue}>{formatTime(todayAttendance.checkInTime)}</Text>
+                            </View>
+                            <View style={styles.statusDivider} />
+                            <View style={styles.statusItem}>
+                                <Text style={styles.statusLabel}>Check Out</Text>
+                                <Text style={styles.statusValue}>{formatTime(todayAttendance.checkOutTime)}</Text>
+                            </View>
+                            <View style={styles.statusDivider} />
+                            <View style={styles.statusItem}>
+                                <Text style={styles.statusLabel}>Duration</Text>
+                                <Text style={[styles.statusValue, styles.durationValue]}>{todayDuration.formattedDuration}</Text>
                             </View>
                         </View>
-                    </View>
+
+                        {/* Show multiple sessions if any */}
+                        {todayDuration.sessions.length > 1 && (
+                            <View style={styles.sessionsContainer}>
+                                <Text style={styles.sessionsTitle}>Work Sessions:</Text>
+                                {todayDuration.sessions.map((session, index) => (
+                                    <View key={index} style={styles.sessionItem}>
+                                        <Text style={styles.sessionTime}>
+                                            {session.checkIn} - {session.checkOut}
+                                        </Text>
+                                        <Text style={[styles.sessionDuration, session.isActive && styles.activeSession]}>
+                                            {session.duration} {session.isActive && '(Active)'}
+                                        </Text>
+                                    </View>
+                                ))}
+                            </View>
+                        )}
+                    </>
                 ) : (
                     <Text style={styles.noAttendance}>No check-in recorded today</Text>
                 )}
@@ -382,6 +457,47 @@ const styles = StyleSheet.create({
         color: '#999',
         textAlign: 'center',
         fontStyle: 'italic',
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#f5f5f5',
+    },
+    loadingText: {
+        fontSize: 16,
+        color: '#666',
+    },
+    durationValue: {
+        color: '#FF6B35',
+    },
+    sessionsContainer: {
+        marginTop: 16,
+        paddingTop: 16,
+        borderTopWidth: 1,
+        borderTopColor: '#f0f0f0',
+    },
+    sessionsTitle: {
+        fontSize: 12,
+        color: '#666',
+        marginBottom: 8,
+    },
+    sessionItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 6,
+    },
+    sessionTime: {
+        fontSize: 13,
+        color: '#333',
+    },
+    sessionDuration: {
+        fontSize: 13,
+        color: '#4CAF50',
+        fontWeight: '500',
+    },
+    activeSession: {
+        color: '#FF6B35',
     },
 });
 

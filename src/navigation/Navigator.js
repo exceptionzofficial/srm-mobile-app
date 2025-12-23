@@ -1,5 +1,6 @@
 /**
  * Main Navigation for SRM Sweets App
+ * Flow: Attendance (main) -> Registration for new users
  */
 
 import React from 'react';
@@ -7,10 +8,10 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 // Import screens
+import AttendanceScreen from '../screens/AttendanceScreen';
 import EmployeeIdScreen from '../screens/EmployeeIdScreen';
 import FaceRegistrationScreen from '../screens/FaceRegistrationScreen';
 import DashboardScreen from '../screens/DashboardScreen';
-import AttendanceScreen from '../screens/AttendanceScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -18,25 +19,21 @@ const Navigator = () => {
     return (
         <NavigationContainer>
             <Stack.Navigator
-                initialRouteName="EmployeeId"
+                initialRouteName="Attendance"
                 screenOptions={{
                     headerShown: false,
                     animation: 'slide_from_right',
                 }}>
-                {/* Auth / Registration Flow */}
+                {/* Main Attendance Screen - First */}
                 <Stack.Screen
-                    name="EmployeeId"
-                    component={EmployeeIdScreen}
+                    name="Attendance"
+                    component={AttendanceScreen}
                     options={{
                         animation: 'fade',
                     }}
                 />
-                <Stack.Screen
-                    name="FaceRegistration"
-                    component={FaceRegistrationScreen}
-                />
 
-                {/* Main App Flow */}
+                {/* Dashboard */}
                 <Stack.Screen
                     name="Dashboard"
                     component={DashboardScreen}
@@ -44,9 +41,15 @@ const Navigator = () => {
                         animation: 'fade',
                     }}
                 />
+
+                {/* Registration Flow */}
                 <Stack.Screen
-                    name="Attendance"
-                    component={AttendanceScreen}
+                    name="EmployeeId"
+                    component={EmployeeIdScreen}
+                />
+                <Stack.Screen
+                    name="FaceRegistration"
+                    component={FaceRegistrationScreen}
                 />
             </Stack.Navigator>
         </NavigationContainer>
@@ -54,3 +57,4 @@ const Navigator = () => {
 };
 
 export default Navigator;
+

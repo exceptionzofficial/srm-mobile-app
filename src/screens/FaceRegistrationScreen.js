@@ -24,6 +24,8 @@ import {
     getCurrentLocation,
     validateLocationFast,
 } from '../utils/location';
+import RNFS from 'react-native-fs';
+import { COLORS } from '../utils/theme';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -125,7 +127,6 @@ const FaceRegistrationScreen = ({ route, navigation }) => {
             });
 
             // Read the photo as base64
-            const RNFS = require('react-native-fs');
             const base64Data = await RNFS.readFile(photo.path, 'base64');
             const imageBase64 = `data:image/jpeg;base64,${base64Data}`;
 

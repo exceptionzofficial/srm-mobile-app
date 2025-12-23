@@ -22,6 +22,9 @@ import {
     getCurrentLocation,
     validateLocationFast,
 } from '../utils/location';
+import { saveSession } from '../utils/session';
+import RNFS from 'react-native-fs';
+import { COLORS } from '../utils/theme';
 
 const AttendanceScreen = ({ navigation }) => {
     const cameraRef = useRef(null);
@@ -109,7 +112,7 @@ const AttendanceScreen = ({ navigation }) => {
                 flash: 'off',
             });
 
-            const RNFS = require('react-native-fs');
+            // Read the photo as base64
             const base64Data = await RNFS.readFile(photo.path, 'base64');
             const imageBase64 = `data:image/jpeg;base64,${base64Data}`;
 
@@ -125,13 +128,18 @@ const AttendanceScreen = ({ navigation }) => {
             }
 
             if (response.success) {
+                // Save session on check-in for persistent login
+                if (mode === 'check-in' && response.employee) {
+                    await saveSession(response.employee);
+                }
+
                 Alert.alert(
                     mode === 'check-in' ? '✅ Check-In Successful!' : '✅ Check-Out Successful!',
                     response.message,
                     [
                         {
-                            text: 'OK',
-                            onPress: () => navigation.goBack(),
+                            text: 'View Dashboard',
+                            onPress: () => navigation.navigate('Dashboard', { employee: response.employee }),
                         },
                     ],
                 );
@@ -139,7 +147,23 @@ const AttendanceScreen = ({ navigation }) => {
         } catch (error) {
             const errorMessage =
                 error.response?.data?.message || `Failed to ${mode}`;
-            Alert.alert('Error', errorMessage);
+
+            // Check if face not recognized - offer registration
+            if (error.response?.status === 404 && errorMessage.toLowerCase().includes('face')) {
+                Alert.alert(
+                    '👤 Face Not Registered',
+                    'Your face is not registered yet. Would you like to register now?',
+                    [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                            text: 'Register Face',
+                            onPress: () => navigation.navigate('EmployeeId'),
+                        },
+                    ],
+                );
+            } else {
+                Alert.alert('Error', errorMessage);
+            }
         } finally {
             setLoading(false);
         }
@@ -195,12 +219,18 @@ const AttendanceScreen = ({ navigation }) => {
             <View style={styles.overlay}>
                 {/* Header */}
                 <View style={styles.header}>
+                    <View style={styles.headerLeft}>
+                        <Text style={styles.headerLogo}>🍬</Text>
+                        <View>
+                            <Text style={styles.headerTitle}>SRM Sweets</Text>
+                            <Text style={styles.headerSubtitle}>Mark Attendance</Text>
+                        </View>
+                    </View>
                     <TouchableOpacity
-                        style={styles.backButton}
-                        onPress={() => navigation.goBack()}>
-                        <Text style={styles.backText}>← Back</Text>
+                        style={styles.registerButton}
+                        onPress={() => navigation.navigate('EmployeeId')}>
+                        <Text style={styles.registerText}>Register</Text>
                     </TouchableOpacity>
-                    <Text style={styles.headerTitle}>Mark Attendance</Text>
                 </View>
 
                 {/* Mode Toggle */}
@@ -277,21 +307,37 @@ const styles = StyleSheet.create({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'space-between',
         padding: 20,
         paddingTop: 50,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        gap: 16,
+        backgroundColor: 'rgba(0,0,0,0.6)',
     },
-    backButton: {
-        padding: 8,
+    headerLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
     },
-    backText: {
-        color: '#fff',
-        fontSize: 16,
+    headerLogo: {
+        fontSize: 32,
     },
     headerTitle: {
         color: '#fff',
         fontSize: 18,
+        fontWeight: '700',
+    },
+    headerSubtitle: {
+        color: 'rgba(255,255,255,0.7)',
+        fontSize: 12,
+    },
+    registerButton: {
+        backgroundColor: '#FF6B35',
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 20,
+    },
+    registerText: {
+        color: '#fff',
+        fontSize: 13,
         fontWeight: '600',
     },
     modeContainer: {
